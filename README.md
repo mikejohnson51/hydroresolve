@@ -21,8 +21,11 @@ Concept](https://www.repostatus.org/badges/latest/concept.svg)](https://www.repo
 -   [x] `sfnetwork` support
 -   [x] RPU workflow setup
 -   [x] Orphan Flowpaths
+-   [ ] Level path “fill in”
 -   [ ] Levelpath aggregation
 -   [ ] Mid-network dissolve
 -   [ ] Headwater dissolve
 -   [ ] Release strategy
--   [ ] Integration of `zonal`/`geogrids` w/ release
+-   [ ] Integration of
+    [`zonal`](https://mikejohnson51.github.io/zonal/dev/)/[`geogrids`](https://mikejohnson51.github.io/geogrids/dev/)
+    with release
