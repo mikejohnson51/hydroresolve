@@ -1,0 +1,9 @@
+^data$
+^outputs$
+^figures$
+^releases$
+^runners$
+^LICENSE\.md$
+^README\.Rmd$
+^.*\.Rproj$
+^\.Rproj\.user$

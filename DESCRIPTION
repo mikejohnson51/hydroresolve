@@ -1,0 +1,26 @@
+Package: hydroresolve
+Type: Package
+Title: The Title of the Project
+Version: 0.0.0.9000
+Authors@R: c(
+    person(given   = "Mike",
+           family  = "Johnson",
+           role    = c("aut", "cre"),
+           email   = "mikecp11@gmail.com",
+           comment = c(ORCID = "{{orcid}}")))
+Description: A paragraph providing a full description of the project (on several 
+    lines...)
+URL: https://github.com/mikejohnson51/hydroresolve
+BugReports: https://github.com/mikejohnson51/hydroresolve/issues
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Imports: 
+    dplyr,
+    methods,
+    sf,
+    sfarrow,
+    sfnetworks
+Depends: R (>= 3.4)

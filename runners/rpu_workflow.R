@@ -1,0 +1,24 @@
+files   = build_rpu_parquet(rpu = "01a", overwrite = FALSE)
+
+orphans = find_orphan_flowpaths(files) 
+cleaned = merge_orphan_flowpaths(orphans)
+network = prep_network_graph(cleaned, files$cat, ID_col = "ID")
+write_network_gpkg(network, "data/test.gpkg")
+
+
+
+document()
+load_all()
+rcompendium::add_dependencies()
+rcompendium::add_dependencies_badge()
+rcompendium::add_r_depend()
+
+
+# rcompendium::add_github_actions_check(overwrite = TRUE)
+# rcompendium::add_github_actions_check_badge()
+# rcompendium::add_license("MIT", "Mike", "Johnson")
+# rcompendium::add_license_badge()
+# rcompendium::add_lifecycle_badge('experimental')
+# rcompendium::add_repostatus_badge("concept")
+
+
