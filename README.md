@@ -5,7 +5,7 @@
 
 <!-- badges: start -->
 
-[![Dependencies](https://img.shields.io/badge/dependencies-4/37-green?style=flat)](#)
+[![Dependencies](https://img.shields.io/badge/dependencies-7/36-orange?style=flat)](#)
 [![R CMD
 Check](https://github.com/mikejohnson51/hydroresolve/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mikejohnson51/hydroresolve/actions/workflows/R-CMD-check.yaml)
 [![License:

@@ -14,7 +14,7 @@ build_rpu_parquet = function(rpu = "01a", rds_dir = "/Users/mjohnson/nhd_rds",
                              outdir = "./data", overwrite = FALSE){
   
   outfile     = file.path(outdir, paste0(rpu,'_nhdplus_flowline_update.parquet'))
-  outfile_cat = file.path(outdir, paste0(rpu,'nhdplus_catchment.parquet'))
+  outfile_cat = file.path(outdir, paste0(rpu,'_nhdplus_catchment.parquet'))
   
   if(any(!file.exists(outfile), !file.exists(outfile_cat), overwrite)){
   

@@ -1,9 +1,14 @@
-files   = build_rpu_parquet(rpu = "01a", overwrite = FALSE)
 
+rpu = "01a"
+files   = build_rpu_parquet(rpu = rpu, overwrite = FALSE)
 orphans = find_orphan_flowpaths(files) 
 cleaned = merge_orphan_flowpaths(orphans)
 network = prep_network_graph(cleaned, files$cat, ID_col = "ID")
-write_network_gpkg(network, "data/test.gpkg")
+write_network_gpkg(network, paste0("data/", rpu, "-test.gpkg"))
+                   
+runner = find_disconnected_lp(network$fl)
+
+lpID = 2278107
 
 
 

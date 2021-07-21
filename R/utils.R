@@ -123,3 +123,80 @@ write_network_gpkg = function(network, outpath){
   write_sf(network$nex, outpath, layer = "nexi")
   
 }
+
+
+#' Build Node Net
+#' @param flowpaths a filepath to a `parquet` file or `sf` object
+#' @param add_type 
+#' @importFrom sfnetworks as_sfnetwork activate
+#' @importFrom tidygraph edge_is_multiple edge_is_loop
+#' @importFrom sf st_as_sf st_drop_geometry
+#' @importFrom dplyr mutate n left_join select
+#' @return list
+#' @export
+
+build_node_net = function(flowpaths, add_type = TRUE){
+  
+  flowpaths = read_hydro(flowpaths)
+  
+  net = suppressWarnings({ sfnetworks::as_sfnetwork(flowpaths)  })
+  # network    = st_as_sf(mutate(activate(net,"edges"))) 
+  network = net %>% 
+    activate('edges') %>% 
+    filter(!edge_is_multiple()) %>%
+    filter(!edge_is_loop()) %>% 
+    st_as_sf()
+  
+  nodes = st_as_sf(mutate(activate(net,"nodes"), nexID = 1:n()))
+  
+  if(add_type){
+    id_map = network %>% 
+      # Identify fromID from fromNODE
+      left_join(select(st_drop_geometry(network), fromID  = ID, tmpto = to),   
+                by = c("from" = "tmpto")) %>% 
+      # Identify toID from toNODE
+      left_join(select(st_drop_geometry(network), toID    = ID, tmpfrom = from),
+                by = c("to" = "tmpfrom"))
+    
+    hw   = id_map$from[!id_map$from %in% id_map$to]
+    term = id_map$to[!id_map$to %in% id_map$from]
+    nodes$type = ifelse(nodes$nexID %in% hw, "hw", NA)
+    nodes$type = ifelse(nodes$nexID %in% term, "term", nodes$type)
+    nodes$type = ifelse(is.na(nodes$type), "nex", nodes$type)
+    
+    network$fromType = left_join(select(network, from), 
+                                 st_drop_geometry(nodes), by = c('from' = "nexID"))$type
+    
+    network$toType = left_join(select(network, to), 
+                               st_drop_geometry(nodes), by = c('to' = "nexID"))$type
+  }
+  
+  list(node = nodes, network = network)
+}
+
+#' Find flowline node
+#' Returns the start or end node from a flowline.
+#' @param x `sf` flowline object
+#' @param position Node to find: "start" or "end"
+#' @return
+#' @export
+#' @importFrom sf st_coordinates st_as_sf st_crs
+#' @importFrom dplyr group_by filter row_number ungroup
+
+find_node = function (x, position = "end") {
+  tmp <- st_coordinates(x) %>% as.data.frame()
+  if ("L2" %in% names(x)) {
+    tmp <- group_by(tmp, .data$L2)
+  } else {
+    tmp <- group_by(tmp, .data$L1)
+  }
+  
+  if (position == "end") {
+    tmp <- filter(tmp, row_number() == n())
+  } else if (position == "start") {
+    tmp <- filter(tmp, row_number() == 1)
+  }
+  
+  tmp <- select(ungroup(tmp), X, Y)
+  st_as_sf(tmp, coords = c("X", "Y"), crs = st_crs(x))
+}
