@@ -25,7 +25,7 @@ Concept](https://www.repostatus.org/badges/latest/concept.svg)](https://www.repo
 -   [ ] Levelpath aggregation
 -   [ ] Mid-network dissolve
 -   [ ] Headwater dissolve
--   [ ] Release strategy
+-   [x] Release strategy
 -   [ ] Integration of
     [`zonal`](https://mikejohnson51.github.io/zonal/dev/)/[`geogrids`](https://mikejohnson51.github.io/geogrids/dev/)
     with release
