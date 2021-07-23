@@ -52,33 +52,33 @@
 # 
 # # Here we start to find cases where multiple IDs are being 
 # # sent to the same toID
-tmp = id_map2 %>%
-  group_by(send_to) %>%
-  mutate(n = n())   %>%
-  ungroup() %>%
-  filter(n > 1)
-
-# TRY reversing to_send to selection
-rev = tmp %>%
-  mutate(send_to = ifelse(fromCount == 1, fromID, toID)) %>%
-  group_by(send_to) %>%
-  mutate(n = n())
-
-#IF FROMs are NA and going to the same toID, drop the shorter one
-stubborn = filter(rev, n > 1) %>%
-  filter(sum(is.na(fromID)) != n) %>%
-  ungroup()
-
-rm_stubborn = filter(rev, n > 1) %>%
-  filter(sum(is.na(fromID)) == n) %>%
-  ungroup()
-
-rev2 = filter(rev, n == 1)
-
-to_merge = filter(id_map2, !ID %in% tmp$ID) %>%
-  bind_rows(rev2, stubborn) %>%
-  mutate(geom  = NA,
-         comid = NA)
+# tmp = id_map2 %>%
+#   group_by(send_to) %>%
+#   mutate(n = n())   %>%
+#   ungroup() %>%
+#   filter(n > 1)
+# 
+# # TRY reversing to_send to selection
+# rev = tmp %>%
+#   mutate(send_to = ifelse(fromCount == 1, fromID, toID)) %>%
+#   group_by(send_to) %>%
+#   mutate(n = n())
+# 
+# #IF FROMs are NA and going to the same toID, drop the shorter one
+# stubborn = filter(rev, n > 1) %>%
+#   filter(sum(is.na(fromID)) != n) %>%
+#   ungroup()
+# 
+# rm_stubborn = filter(rev, n > 1) %>%
+#   filter(sum(is.na(fromID)) == n) %>%
+#   ungroup()
+# 
+# rev2 = filter(rev, n == 1)
+# 
+# to_merge = filter(id_map2, !ID %in% tmp$ID) %>%
+#   bind_rows(rev2, stubborn) %>%
+#   mutate(geom  = NA,
+#          comid = NA)
 # 
 # for(i in 1:nrow(to_merge)){
 #   to_merge$geom[i] = build_flow_line(filter(network, ID == to_merge$ID[i])$geometry,

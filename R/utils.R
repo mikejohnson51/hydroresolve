@@ -158,17 +158,19 @@ build_node_net = function(flowpaths, add_type = TRUE){
       left_join(select(st_drop_geometry(network), toID    = ID, tmpfrom = from),
                 by = c("to" = "tmpfrom"))
     
-    hw   = id_map$from[!id_map$from %in% id_map$to]
-    term = id_map$to[!id_map$to %in% id_map$from]
+    hw         = id_map$from[!id_map$from %in% id_map$to]
+    term       = id_map$to[!id_map$to %in% id_map$from]
     nodes$type = ifelse(nodes$nexID %in% hw, "hw", NA)
     nodes$type = ifelse(nodes$nexID %in% term, "term", nodes$type)
     nodes$type = ifelse(is.na(nodes$type), "nex", nodes$type)
     
     network$fromType = left_join(select(network, from), 
-                                 st_drop_geometry(nodes), by = c('from' = "nexID"))$type
+                                 st_drop_geometry(nodes), 
+                                 by = c('from' = "nexID"))$type
     
     network$toType = left_join(select(network, to), 
-                               st_drop_geometry(nodes), by = c('to' = "nexID"))$type
+                               st_drop_geometry(nodes), 
+                               by = c('to' = "nexID"))$type
   }
   
   list(node = nodes, network = network)
@@ -177,14 +179,14 @@ build_node_net = function(flowpaths, add_type = TRUE){
 #' Find flowline node
 #' Returns the start or end node from a flowline.
 #' @param x `sf` flowline object
-#' @param position Node to find: "start" or "end"
+#' @param position Node to find: "start" or "end" or "both"
 #' @return
 #' @export
 #' @importFrom sf st_coordinates st_as_sf st_crs
 #' @importFrom dplyr group_by filter row_number ungroup
 
 find_node = function (x, position = "end") {
-  tmp <- st_coordinates(x) %>% as.data.frame()
+  tmp <- as.data.frame(st_coordinates(x))
   if ("L2" %in% names(x)) {
     tmp <- group_by(tmp, .data$L2)
   } else {
@@ -195,6 +197,8 @@ find_node = function (x, position = "end") {
     tmp <- filter(tmp, row_number() == n())
   } else if (position == "start") {
     tmp <- filter(tmp, row_number() == 1)
+  } else {
+    tmp <- filter(tmp, row_number() %in% c(1, n()))
   }
   
   tmp <- select(ungroup(tmp), X, Y)

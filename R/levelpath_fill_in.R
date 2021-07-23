@@ -7,11 +7,11 @@
 #' @export
 
 find_disconnected_lp = function(flowpaths){
-  SPDF =  as_Spatial(fl)
+  SPDF =  as_Spatial(flowpaths)
 
   rownames(SPDF@data) <- sapply(slot(SPDF, "lines"), function(x) slot(x, "ID"))
   
-  tmp <- rgeos::gLineMerge(SPDF, byid = TRUE, id = fl$levelpath)
+  tmp <- rgeos::gLineMerge(SPDF, byid = TRUE, id = flowpaths$levelpath)
   
   ids <- sapply(slot(tmp, "lines"), function(x) slot(x, "ID"))
   
@@ -19,7 +19,7 @@ find_disconnected_lp = function(flowpaths){
     mutate(levelpath = ids) %>% 
     st_line_merge() 
   
-  runner = out$levelpath[st_geometry_type(out2) == "MULTILINESTRING"]
+  runner = out$levelpath[st_geometry_type(out) == "MULTILINESTRING"]
   
   unique(runner) 
 }
@@ -53,29 +53,53 @@ fill_level_path = function(lpID, network){
   tail = ifelse(lengths(st_intersects(t1, lp)) > lengths(st_intersects(t2, lp)),
                 t2, t1)
   
-  candidate = st_filter(network, st_union(st_buffer(lp, 5000)))
-
-  t = st_line_merge(st_union(candidate)) %>% 
-    st_cast("LINESTRING") %>% 
-    st_as_sf()
+  ends = find_node(lp, 'end')
+  e = lp
+  
+  iterative_fill = function(e, network){
+    e1 = st_filter(network, e, .predicate = st_touches)
+    e2 = st_filter(network, e1, .predicate = st_touches)
+    mapview(e) + e1
+    
+  }
+  
+  candidate = st_filter(network, st_union(st_buffer(lp, 5000))) %>%
+    flowpaths_to_linestrings()
 
   
-  net = as_sfnetwork(t, directed = FALSE) %>%
-    activate("edges") %>%
+  net = st_line_merge(st_union(e2)) %>% 
+    st_cast("LINESTRING") %>% 
+    st_as_sf() %>% 
+    as_sfnetwork(directed = FALSE) %>%
+    activate("edges") %>% 
     filter(!edge_is_multiple()) %>%
     filter(!edge_is_loop()) %>% 
     convert(
       to_spatial_shortest_paths,
-      from = head[[1]], to = tail[[1]],
-      weights = edge_length()
+      from = head[[1]], to = tail[[1]]
     )
+  
+  
+  paths = mapply(
+    st_network_paths,
+    from = st_as_sf(head[[1]]),
+    to = ends,
+    MoreArgs = list(x = net)
+  )["node_paths", ] %>%
+    unlist(recursive = FALSE)
+  
+  n2 = net %>%
+    activate("nodes") %>%
+    slice(unlist(paths)) 
 
-  new_lp = st_as_sf(activate(net, "edges")) 
+
+  new_lp = st_as_sf(activate(net, "edges"))
+  
   
   st_anti_filter = function(.x, .y, .predicate = st_intersects) {
     filter(.x, lengths(.predicate(.x, .y)) == 0)
   }
-  
+
   c = build_node_net(candidate)
   
   breaks = st_collection_extract(lwgeom::st_split(candidate, c$node),"LINESTRING") 
@@ -93,12 +117,20 @@ fill_level_path = function(lpID, network){
     for(j in 1:nrow(frags)){
       cand = frags[j,]
       
+      tmp_lp = filter(c$network, levelpath == 2242868)
       non_lp_connection = st_filter(c$network, cand,  .predicate = st_touches) %>% 
         filter(!ID %in% new_lp_full$ID)
-
-      non_lp_connection$geometry = build_flow_line(frags$geometry[j], 
-                                                   non_lp_connection$geometry)
       
+      # TODO
+      # non-lp can be only of length 1
+      # HYDROSEQ numbers increase from downstream to upstream
+      # Eg upstream is bigger!
+      # Find upstream 
+      non_lp_connection$test = non_lp_connection$hydroseq < cand$hydroseq
+
+      non_lp_connection$geometry = build_flow_line(cand$geometry, 
+                                                   non_lp_connection$geometry)
+
       non_lp_connection$comid = paste(non_lp_connection$comid,
                                              frags$comid[j], sep = ",")
       
@@ -110,12 +142,15 @@ fill_level_path = function(lpID, network){
   }
   
   corr = bind_rows(corrections) 
+  if(nrow(corr) == 0){ corr = NULL }
   
-  new_lp_full = new_lp_full %>% 
+  new_lp_full = xx %>% 
     mutate(levelpath = as.numeric(levelpath))
   
   improvements = bind_rows(new_lp_full, corr) 
   
-  bind_rows(improvements, filter(network, !ID %in% improvements$ID))
+  bind_rows(improvements, filter(network, !ID %in% improvements$ID)) %>% 
+    st_line_merge()
+
 }
 

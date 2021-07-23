@@ -7,13 +7,18 @@ network = prep_network_graph(cleaned, files$cat, ID_col = "ID")
 write_network_gpkg(network, paste0("data/", rpu, "-test.gpkg"))
                    
 runner = find_disconnected_lp(network$fl)
+tmpNet = network$fl
 
-lpID = 2278107
+system.time({
+  for(i in 1:6){
+    tmpNet = fill_level_path(lpID  = runner[i], network = tmpNet)
+    table(st_geometry_type(tmpNet))
+    message(i)
+  }
+})
 
-
-
-document()
-load_all()
+devtools::document()
+devtools::load_all()
 rcompendium::add_dependencies()
 rcompendium::add_dependencies_badge()
 rcompendium::add_r_depend()

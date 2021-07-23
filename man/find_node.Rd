@@ -10,7 +10,7 @@ find_node(x, position = "end")
 \arguments{
 \item{x}{\code{sf} flowline object}
 
-\item{position}{Node to find: "start" or "end"}
+\item{position}{Node to find: "start" or "end" or "both"}
 }
 \value{
 

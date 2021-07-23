@@ -4,7 +4,7 @@
 #' @importFrom sfarrow st_read_parquet
 #' @importFrom sfnetworks as_sfnetwork activate 
 #' @importFrom sf st_as_sf st_drop_geometry
-#' @importFrom dplyr select filter left_join mutate group_by ungroup bind_rows
+#' @importFrom dplyr select filter left_join mutate group_by ungroup bind_rows anti_join
 #' @export
 
 #files = build_rpu_parquet(rpu = "01a", overwrite = FALSE)
