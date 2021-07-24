@@ -60,7 +60,7 @@ jobs:
         shell: Rscript {0}
         
       - name: Install spatial dependencies
-         run: sudo apt-get install libgdal-dev libproj-dev libgeos-dev libudunits2-dev netcdf-bin
+        run: sudo apt-get install libgdal-dev libproj-dev libgeos-dev libudunits2-dev netcdf-bin
 
       - name: Install dependencies
         run: |
