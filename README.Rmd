@@ -30,10 +30,10 @@ knitr::opts_chunk$set(
 - [x] RPU workflow setup
 - [x] Orphan Flowpaths
 - [x] Level path "fill in"
-- [ ] Level path "fill in" duplicates??
+- [x] Level path "fill in" duplicates??
 - [ ] Levelpath aggregation
 - [ ] Mid-network dissolve
 - [ ] Headwater dissolve
-- [x] Release strategy
+- [] Release strategy
 - [ ] Integration of [`zonal`](https://mikejohnson51.github.io/zonal/dev/)/[`geogrids`](https://mikejohnson51.github.io/geogrids/dev/) with release
  

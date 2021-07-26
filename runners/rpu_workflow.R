@@ -16,6 +16,7 @@ devtools::check()
 rcompendium::add_dependencies()
 rcompendium::add_dependencies_badge()
 rcompendium::add_r_depend()
+knitr::knit("README.Rmd")
 
 # rcompendium::add_github_actions_check(overwrite = TRUE)
 # rcompendium::add_github_actions_check_badge()
