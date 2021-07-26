@@ -18,10 +18,13 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
 Imports: 
     dataRetrieval,
+    doParallel,
     dplyr,
+    foreach,
     jsonlite,
     lwgeom,
     methods,
+    parallel,
     rgeos,
     sf,
     sfarrow,

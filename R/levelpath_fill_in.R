@@ -150,3 +150,40 @@ fill_level_path = function(lpID, network){
   #bind_rows(mods, filter(network, !ID %in% mods$ID)) 
 }
 
+
+#' Consolidate LevelPaths
+#' @param network a network list
+#' @param runner set of levelpaths to fill and correct
+#' @importFrom parallel detectCores 
+#' @importFrom doParallel registerDoParallel
+#' @importFrom foreach foreach `%dopar%`
+#' @importFrom dplyr filter bind_rows group_by summarize
+#' @export
+#' 
+consolidate_levelpaths = function(network, runner){
+  
+  i <- ID <- hydroseq <- levelpath <- NULL
+  
+  nCores <- parallel::detectCores() - 2 
+  doParallel::registerDoParallel(nCores)
+  out = foreach(i = 1:length(runner), .combine = rbind) %dopar% {
+    fill_level_path(lpID  = runner[i], network = network$fl)
+  }
+  
+  fl   = bind_rows(out, filter(network$fl, !ID %in% out$ID)) 
+  
+  tmp  = filter(fl, ID %in% fl$ID[duplicated(fl$ID)])
+  
+  new_fl = group_by(tmp, ID) %>% 
+    summarize(hydroseq  = hydroseq[1], levelpath = levelpath[1]) %>% 
+    flowpaths_to_linestrings()
+  
+  output = bind_rows(filter(fl, !ID %in% new_fl$ID), new_fl)
+  
+  if(nrow(network$cat) == nrow(output)){
+    return(output)
+  } else {
+    stop("Unsuccessfull levelpath filling")
+  }
+}
+

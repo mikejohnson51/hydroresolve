@@ -16,7 +16,7 @@ knitr::opts_chunk$set(
 # hydroresolve
 
 <!-- badges: start -->
-[![Dependencies](https://img.shields.io/badge/dependencies-10/50-red?style=flat)](#)
+[![Dependencies](https://img.shields.io/badge/dependencies-12/51-red?style=flat)](#)
 [![R CMD Check](https://github.com/mikejohnson51/hydroresolve/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mikejohnson51/hydroresolve/actions/workflows/R-CMD-check.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://choosealicense.com/licenses/mit/)
 [![LifeCycle](man/figures/lifecycle/lifecycle-experimental.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
@@ -29,7 +29,8 @@ knitr::opts_chunk$set(
 - [x] `sfnetwork` support
 - [x] RPU workflow setup
 - [x] Orphan Flowpaths
-- [ ] Level path "fill in"
+- [x] Level path "fill in"
+- [ ] Level path "fill in" duplicates??
 - [ ] Levelpath aggregation
 - [ ] Mid-network dissolve
 - [ ] Headwater dissolve
