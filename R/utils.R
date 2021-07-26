@@ -57,13 +57,14 @@ read_hydro = function(obj){
 #' @param flowpaths a filepath to a `parquet` file or `sf` object
 #' @param catchments a filepath to a `parquet` file or `sf` object
 #' @param ID_col the desired ID column
-#' @return
 #' @export
 #' @importFrom sfnetworks as_sfnetwork activate
 #' @importFrom sf st_as_sf
 #' @importFrom dplyr mutate rename
 
 prep_network_graph = function(flowpaths, catchments, ID_col = "ID"){
+  
+  old_id <- NULL
   
   flowpaths  = read_hydro(flowpaths)
   catchments = read_hydro(catchments)
@@ -104,10 +105,8 @@ prep_network_graph = function(flowpaths, catchments, ID_col = "ID"){
 
 
 #' Write a HydroNetwork GPKG
-#'
 #' @param network a newtwork list containing a cat, fl, and nex item (see `prep_network_graph`)
 #' @param outpath where to write the file?
-#' @return
 #' @export
 #' @importFrom sf write_sf
 
@@ -127,7 +126,7 @@ write_network_gpkg = function(network, outpath){
 
 #' Build Node Net
 #' @param flowpaths a filepath to a `parquet` file or `sf` object
-#' @param add_type 
+#' @param add_type should the nexus type be added?
 #' @importFrom sfnetworks as_sfnetwork activate
 #' @importFrom tidygraph edge_is_multiple edge_is_loop
 #' @importFrom sf st_as_sf st_drop_geometry
@@ -136,6 +135,7 @@ write_network_gpkg = function(network, outpath){
 #' @export
 
 build_node_net = function(flowpaths, add_type = TRUE){
+   ID <- to <- from <- NULL
   
   flowpaths = read_hydro(flowpaths)
   
@@ -180,17 +180,19 @@ build_node_net = function(flowpaths, add_type = TRUE){
 #' Returns the start or end node from a flowline.
 #' @param x `sf` flowline object
 #' @param position Node to find: "start" or "end" or "both"
-#' @return
 #' @export
 #' @importFrom sf st_coordinates st_as_sf st_crs
 #' @importFrom dplyr group_by filter row_number ungroup
 
 find_node = function (x, position = "end") {
+  
+  X <- Y <- L1 <- L2 <- NULL
+  
   tmp <- as.data.frame(st_coordinates(x))
   if ("L2" %in% names(x)) {
-    tmp <- group_by(tmp, .data$L2)
+    tmp <- group_by(tmp, L2)
   } else {
-    tmp <- group_by(tmp, .data$L1)
+    tmp <- group_by(tmp, L1)
   }
   
   if (position == "end") {

@@ -8,7 +8,7 @@ Authors@R: c(
            role    = c("aut", "cre"),
            email   = "mikecp11@gmail.com",
            comment = c(ORCID = "{{orcid}}")))
-Description: Starting from the NHD tools are developed to resolve the flow and spatial topology networks
+Description: Starting from the NHD tools are developed to resolve the flow and spatial topology networks.
 URL: https://github.com/mikejohnson51/hydroresolve
 BugReports: https://github.com/mikejohnson51/hydroresolve/issues
 License: MIT + file LICENSE
@@ -19,7 +19,6 @@ RoxygenNote: 7.1.1
 Imports: 
     dataRetrieval,
     dplyr,
-    foreach,
     jsonlite,
     lwgeom,
     methods,

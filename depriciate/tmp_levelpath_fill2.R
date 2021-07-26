@@ -35,7 +35,7 @@ st_overlaps_within = function(.x, .y) {
   .x[int >= 1,]
 }   
 
-#lpID = runner[3]
+#lpID = runner[90]
 
 ############################################################################
 
@@ -195,6 +195,7 @@ fill_level_path2 = function(lpID, network){
   mods =  bind_rows(mutate(new_lp, levelpath = as.numeric(lpID)), 
                    corrections)
   
+  mapview(mods)
   bind_rows(mods, filter(network, !ID %in% mods$ID)) %>% 
     filter(!ID %in% rids)
 }

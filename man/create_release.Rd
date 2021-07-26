@@ -15,9 +15,6 @@ create_release(fl, cat, dir, version)
 
 \item{version}{named release versions}
 }
-\value{
-
-}
 \description{
 Create Release
 }

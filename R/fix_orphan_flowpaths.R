@@ -7,9 +7,13 @@
 #' @importFrom dplyr select filter left_join mutate group_by ungroup bind_rows anti_join
 #' @export
 
-#files = build_rpu_parquet(rpu = "01a", overwrite = FALSE)
 
 find_orphan_flowpaths = function(files){
+  
+  ID <- hydroseq <- levelpath <- comid <- 
+    from <- to <- toID <- fromID <- toCount <- 
+    id_count <- toLP <- dDS <- . <- send_to <- 
+    fromCount <- NULL
   
   in_fl   = sfarrow::st_read_parquet(files$fl)
   in_cat  = sfarrow::st_read_parquet(files$cat)
@@ -113,6 +117,8 @@ find_orphan_flowpaths = function(files){
 #' @export
 
 merge_orphan_flowpaths = function(orphans){
+  
+  ID <- send_to <- levelpath <- comid <- hydroseq <- geom <- NULL
 
   to_merge = orphans$to_merge %>% 
     mutate(geom   = NA, 

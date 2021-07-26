@@ -10,12 +10,12 @@
 #' Write GeoJSON
 #' @param x sf object
 #' @param file file path
-#' @return
 #' @export
 #' @importFrom sf write_sf st_make_valid st_transform
+
 write_geojson <- function(x, file) {
   names(x) <- tolower(names(x))
-  unlink(y)
+  unlink(file)
   write_sf(st_make_valid(st_transform(x, 4326)), file, 
            layer_options = c("ID_FIELD=id", "ID_TYPE=String"))
 }
@@ -31,17 +31,20 @@ write_geojson <- function(x, file) {
 #' @importFrom units set_units
 #' @importFrom jsonlite unbox write_json
 #' @importFrom utils zip
-#' @return
 #' @export
 
 create_release = function(fl, cat, dir, version){
 
+  ID <- from <- to <- lengthkm <- member_comid <- 
+    levelpath <- toType <- fromType <- id <- . <- 
+    areasqkm <- nexID <- COMID <- siteID <-
+    name <- parm_cd <- data_type_cd <- site_no <- NULL
+  
   net = build_node_net(fl)
   
   nexus_prefix     = "nex-"
   catchment_prefix = "cat-"
   waterbody_prefix = "wb-"
-  
   
   dir.create(file.path(dir, version), showWarnings = FALSE)
   

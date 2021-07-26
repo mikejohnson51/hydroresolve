@@ -13,9 +13,6 @@ prep_network_graph(flowpaths, catchments, ID_col = "ID")
 
 \item{ID_col}{the desired ID column}
 }
-\value{
-
-}
 \description{
 Build HydroNetwork Graph
 }

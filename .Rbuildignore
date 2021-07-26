@@ -1,10 +1,16 @@
 ^data$
 ^outputs$
 ^figures$
-^releases$
+^release$
 ^runners$
 ^LICENSE\.md$
+^CHANGELOG\.md$
+^CONTRIBUTING\.md$
+^INSTALL\.md$
+^SECURITY\.md$
+^TERMS\.md$
 ^README\.Rmd$
 ^.*\.Rproj$
 ^\.Rproj\.user$
 .github
+^depriciate$

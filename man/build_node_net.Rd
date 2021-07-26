@@ -9,7 +9,7 @@ build_node_net(flowpaths, add_type = TRUE)
 \arguments{
 \item{flowpaths}{a filepath to a \code{parquet} file or \code{sf} object}
 
-\item{add_type}{}
+\item{add_type}{should the nexus type be added?}
 }
 \value{
 list

@@ -11,9 +11,6 @@ write_geojson(x, file)
 
 \item{file}{file path}
 }
-\value{
-
-}
 \description{
 Write GeoJSON
 }

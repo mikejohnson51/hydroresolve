@@ -11,9 +11,6 @@ write_network_gpkg(network, outpath)
 
 \item{outpath}{where to write the file?}
 }
-\value{
-
-}
 \description{
 Write a HydroNetwork GPKG
 }

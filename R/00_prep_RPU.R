@@ -1,7 +1,7 @@
 #' Build RPU Parquet file
 #' Relies on have NHDPlus RDS files local
 #' @param rpu RPU to extract
-#' @param rds RDS files
+#' @param rds_dir RDS files
 #' @param outdir Location to save data
 #' @param overwrite Should exisitng files be overwritten?
 #' @return list to files
@@ -12,6 +12,9 @@
 
 build_rpu_parquet = function(rpu = "01a", rds_dir = "/Users/mjohnson/nhd_rds", 
                              outdir = "./data", overwrite = FALSE){
+  
+  RPUID <- COMID <- Hydroseq <- LevelPathI <- Shape <- 
+    ID <- FEATUREID <- NULL
   
   outfile     = file.path(outdir, paste0(rpu,'_nhdplus_flowline_update.parquet'))
   outfile_cat = file.path(outdir, paste0(rpu,'_nhdplus_catchment.parquet'))

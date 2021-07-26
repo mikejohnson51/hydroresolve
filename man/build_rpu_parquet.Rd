@@ -15,11 +15,11 @@ build_rpu_parquet(
 \arguments{
 \item{rpu}{RPU to extract}
 
+\item{rds_dir}{RDS files}
+
 \item{outdir}{Location to save data}
 
 \item{overwrite}{Should exisitng files be overwritten?}
-
-\item{rds}{RDS files}
 }
 \value{
 list to files

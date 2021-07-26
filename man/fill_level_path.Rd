@@ -11,9 +11,6 @@ fill_level_path(lpID, network)
 
 \item{network}{network}
 }
-\value{
-
-}
 \description{
 Fill disconnected LevelPaths
 }

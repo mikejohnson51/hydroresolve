@@ -12,9 +12,6 @@ find_node(x, position = "end")
 
 \item{position}{Node to find: "start" or "end" or "both"}
 }
-\value{
-
-}
 \description{
 Find flowline node
 Returns the start or end node from a flowline.
