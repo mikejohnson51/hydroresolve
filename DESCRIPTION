@@ -26,9 +26,11 @@ Imports:
     methods,
     parallel,
     rgeos,
+    rlang,
     sf,
     sfarrow,
     sfnetworks,
+    stats,
     tidygraph,
     units,
     utils

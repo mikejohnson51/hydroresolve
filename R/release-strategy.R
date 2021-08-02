@@ -59,7 +59,7 @@ create_release = function(fl, cat, dir, version){
   gpkg <- file.path(dir, version, paste0('ngen-', version,  ".gpkg"))
   
   fline = net$network %>%
-    select(ID, from, to, lengthkm, member_comid, levelpath, toType, fromType) 
+    select(ID, from, to, member_comid, levelpath, toType, fromType) 
   
   nexus <-   net$node
   
@@ -109,17 +109,19 @@ create_release = function(fl, cat, dir, version){
   
   what_nwis_data <- dataRetrieval::whatNWISdata(siteNumber = gsub("USGS-", "", oo$siteID))
   
-  nwis_sites <- filter(what_nwis_data, parm_cd == "00060" & data_type_cd == "uv") %>%
-    st_as_sf(coords = c("dec_long_va", "dec_lat_va"),
-             crs = 4269) %>%
+  nwis_sites <- usgs %>% 
+    rename(site_no = siteID) %>% 
+    # filter(what_nwis_data, parm_cd == "00060" & data_type_cd == "uv") %>%
+    # st_as_sf(coords = c("dec_long_va", "dec_lat_va"),
+    #          crs = 4269) %>%
     st_transform(5070) %>% 
     st_join(cat) %>% 
     select(site_no, ID)
   
-  oo = left_join(select(st_drop_geometry(fl), ID, member_comid), st_drop_geometry(nwis_sites))
+  oo = left_join(select(st_drop_geometry(fl), ID, comid), st_drop_geometry(nwis_sites))
   
   nhd_crosswalk <- lapply(1:nrow(oo), function(x) {
-    list(COMID = strsplit(oo$member_comid[x], ",")[[1]],
+    list(COMID = strsplit(oo$comid[x], ",")[[1]],
          site_no = jsonlite::unbox(oo$site_no[x]))
   })
   
@@ -134,8 +136,8 @@ create_release = function(fl, cat, dir, version){
   #######################################
 
   write_geojson(catchment_data, cfile)
-  write_geojson(flowpath_data, wfile)
-  write_geojson(x = nexus_data, nfile)
+  write_geojson(flowpath_data,  wfile)
+  write_geojson(nexus_data, nfile)
   
   jsonlite::write_json(catchment_edge_list, cfe, pretty = TRUE)
   jsonlite::write_json(waterbody_edge_list, wfe, pretty = TRUE)

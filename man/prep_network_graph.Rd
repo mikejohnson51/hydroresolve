@@ -4,7 +4,7 @@
 \alias{prep_network_graph}
 \title{Build HydroNetwork Graph}
 \usage{
-prep_network_graph(flowpaths, catchments, ID_col = "ID")
+prep_network_graph(flowpaths, catchments, ID_col = "ID", directed = FALSE)
 }
 \arguments{
 \item{flowpaths}{a filepath to a \code{parquet} file or \code{sf} object}
@@ -12,6 +12,8 @@ prep_network_graph(flowpaths, catchments, ID_col = "ID")
 \item{catchments}{a filepath to a \code{parquet} file or \code{sf} object}
 
 \item{ID_col}{the desired ID column}
+
+\item{directed}{should graph be directed?}
 }
 \description{
 Build HydroNetwork Graph

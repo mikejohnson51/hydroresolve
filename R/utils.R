@@ -57,12 +57,13 @@ read_hydro = function(obj){
 #' @param flowpaths a filepath to a `parquet` file or `sf` object
 #' @param catchments a filepath to a `parquet` file or `sf` object
 #' @param ID_col the desired ID column
+#' @param directed should graph be directed?
 #' @export
 #' @importFrom sfnetworks as_sfnetwork activate
 #' @importFrom sf st_as_sf
 #' @importFrom dplyr mutate rename
 
-prep_network_graph = function(flowpaths, catchments, ID_col = "ID"){
+prep_network_graph = function(flowpaths, catchments, ID_col = "ID", directed = FALSE){
   
   old_id <- NULL
   
@@ -78,8 +79,8 @@ prep_network_graph = function(flowpaths, catchments, ID_col = "ID"){
     new_id = 1:nrow(flowpaths)
   )
   
-  
-  fl_net = suppressWarnings({ as_sfnetwork(flowpaths) })
+  #TODO: should this be directed???
+  fl_net = suppressWarnings({ as_sfnetwork(flowpaths, directed = directed) })
   
   nodes = st_as_sf(mutate(activate(fl_net,"nodes"), nexID = 1:n()))
   
