@@ -1,0 +1,282 @@
+---
+title: "Release"
+output: html_document
+editor_options:
+  chunk_output_type: console
+params:
+  RPU: 01a
+  dir: "../releases"
+  data_dir: "SUBSETS"
+  version: "main4158"
+  nwm_dir: "/Volumes/Transcend/nwmCONUS-v216"
+  AWS_bucket: NULL
+---
+
+```{r}
+knitr::opts_chunk$set(error = TRUE, cache = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(sf)
+library(hygeo)
+library(zonal)
+library(terra)
+library(data.table)
+library(jsonlite)
+library(RNetCDF)
+
+select <- dplyr::select
+```
+
+
+```{r}
+nexus_prefix     = "nex-"
+catchment_prefix = "cat-"
+waterbody_prefix = "wb-"
+
+here = file.path(params$dir, params$version, params$RPU)
+
+dir.create(here, showWarnings = FALSE, recursive = TRUE)
+  
+cfile <- file.path(here, "catchment_data.geojson")
+wfile <- file.path(here, "flowpath_data.geojson")
+nfile <- file.path(here, "nexus_data.geojson")
+  
+cfe <- file.path(here, "catchment_edge_list.json")
+wfe <- file.path(here, "waterbody_edge_list.json")
+fpe <- file.path(here, "flowpath_edge_list.json")
+cwe <- file.path(here, "crosswalk-mapping.json")
+wbe <- file.path(here, "waterbody-params.json")
+
+gpkg = file.path(here, 'hydrofabric.gpkg')
+agg_file = "SUBSETS/main4158/01a-aggregate.gpkg"
+  
+flowpaths  = read_sf(agg_file, "flowpaths") %>% 
+  attributes_for_flowpaths(
+  rl_vars = c(
+    "link",
+    "Qi",
+    "MusK",
+    "MusX",
+    "n",
+    "So",
+    "ChSlp",
+    "BtmWdth",
+    "time",
+    "Kchan",
+    "nCC",
+    "TopWdthCC",
+    "TopWdth"),
+  rl_path  = file.path(params$nwm_dir, "RouteLink_CONUS.nc"))
+
+tomap      = build_toID_mapping(flowpaths)
+
+flowpaths  = left_join(flowpaths, 
+                       tomap, 
+                       by = 'ID') %>% 
+  mutate(length_m = as.numeric(st_length(.)))
+
+catchments = read_sf(agg_file, "catchments") %>% 
+  left_join(tomap, 
+            by = 'ID')
+```
+
+```{r}
+nexus               <- get_nexus(flowpaths, nexus_prefix)
+
+catchment_edge_list <- get_catchment_edges(flowpaths,
+                                           catchment_prefix = catchment_prefix,
+                                           nexus_prefix = nexus_prefix)
+
+fp_edge_list <- get_catchment_edges(flowpaths,
+                                           catchment_prefix = waterbody_prefix,
+                                           nexus_prefix = nexus_prefix)
+
+
+
+waterbody_edge_list <- get_waterbody_edge_list(flowpaths,
+                                               waterbody_prefix = waterbody_prefix)
+
+catchments$area_sqkm <- catchments$areasqkm
+
+catchment_data <- get_catchment_data(catchments,
+                                     catchment_edge_list,
+                                     catchment_prefix = catchment_prefix)
+
+flowpaths$length_km   <- flowpaths$lengthkm
+flowpaths$LevelPathID <- flowpaths$levelpath
+
+flowpath_data <- get_flowpath_data(flowpaths,
+                                   waterbody_edge_list,
+                                   catchment_prefix = waterbody_prefix) %>%
+      mutate(realized_catchment = gsub(waterbody_prefix, 
+                                     catchment_prefix, ID))
+
+nexus_data <- get_nexus_data(nexus, catchment_edge_list)
+
+```
+
+```{r}
+feilds = select(flowpaths, 
+                -ID, 
+                -LevelPathID,
+                -length_km) %>% 
+   st_drop_geometry() %>% 
+   mutate(comids = strsplit(comids, ","))
+
+feilds <- split(feilds, seq(nrow(feilds)))
+  
+names(feilds) = paste0(waterbody_prefix, flowpaths$ID)
+```
+
+```{r}
+nwis_sites = filter(st_drop_geometry(flowpaths), !is.na(gages)) %>% 
+  select(ID, gages)
+
+network_order <-  nhdplusTools::get_vaa("hydroseq")
+
+nhd_crosswalk <- st_drop_geometry(flowpaths) %>% 
+  select(ID, comids, levelpath) %>% 
+  mutate(comids = strsplit(comids, ",")) %>% 
+  tidyr::unnest(cols = c("comids")) %>% 
+  mutate(ID = ID,
+         comids = as.numeric(comids)) %>% 
+  select(ID, comid = comids, main = levelpath) %>% 
+  left_join(network_order) %>% 
+  group_by(ID) %>% 
+  arrange(hydroseq) %>% 
+  mutate(outlet_comid = first(comid)) %>% 
+  left_join(nwis_sites, by = "ID") %>% 
+  ungroup()
+  
+fwrite(nhd_crosswalk, file.path('SUBSETS/main87/', 'nhd-crosswalk.csv'))
+```
+
+```{r}
+nhd_crosswalk_list <- lapply(unique(nhd_crosswalk$ID), 
+            function(x, df) {
+                df_sub <- df[df$ID == x, ]
+                out <- list(member_comids = df_sub$comid)
+                if (any(!is.na(df_sub$gages))) {
+                  out$gages <- unique(df_sub$gages[!is.na(df_sub$gages)])
+                }
+                out$outlet_comid <- unique(df_sub$outlet_comid)
+                out$main = unique(df_sub$main)
+                out
+            }, df = nhd_crosswalk)
+  
+names(nhd_crosswalk_list) <- paste0(catchment_prefix, unique(nhd_crosswalk$ID))
+
+write_json(catchment_edge_list, cfe, pretty = TRUE)
+write_json(waterbody_edge_list, wfe, pretty = TRUE)
+write_json(fp_edge_list, fpe, pretty = TRUE)
+write_json(nhd_crosswalk_list, cwe, pretty = TRUE, auto_unbox = FALSE)
+write_json(feilds, wbe, pretty = TRUE)
+
+write_sf(catchment_data, gpkg, 'catchments')
+write_sf(flowpath_data,  gpkg, 'flowpaths')
+write_sf(nexus_data,     gpkg, 'nexi')
+```
+
+### NWM Parameters 
+
+```{r geogrid}
+geogrid     = file.path(params$nwm_dir, 'geo_em_CONUS.nc')
+template    = rast(wrfhydroSubsetter::make_empty_geogrid_raster(geogrid))
+f = c('ALBEDO12M', 'GREENFRAC', 'HGT_M', 'LAI12M', 'LANDMASK', 'LU_INDEX', 'SCB_DOM', 'SCT_DOM', 'SLOPECAT', 'SNOALB', 'SOILCBOT', 'SOILCTOP', 'SOILTEMP')
+
+geo = terra::rast(geogrid, subds = f)
+
+ext(geo) = ext(template)
+crs(geo) = crs(template)
+
+nwm_w = zonal::weighting_grid(geo, catchments, "ID")
+
+cols = gsub("_Time=1", "", names(geo))
+out = zonal::execute_zonal(geo, w = nwm_w)
+names(out) = c("ID",  cols)
+
+out[,(cols) := round(.SD,5), .SDcols=cols]
+
+fwrite(out, file.path(here, 'geo_em.csv'), row.names = FALSE)
+```
+
+
+```{r soils}
+soils = rast(file.path(params$nwm_dir, 'soilproperties_CONUS_FullRouting.nc'))
+
+ext(soils) = ext(template)
+crs(soils) = crs(template)
+
+out = zonal::execute_zonal(soils, w = nwm_w)
+names(out) = c("ID", names(soils))
+
+cols <- names(soils)
+out[,(cols) := round(.SD,5), .SDcols=cols]
+
+fwrite(out, file.path(here, 'soil-properties-fullrouting.csv'), row.names = FALSE)
+```
+
+```{r wrfinput}
+path = file.path(params$nwm_dir, 'wrfinput_CONUS.nc')
+f = c('ISLTYP','IVGTYP', 'HGT')
+r1 = terra::rast(path, subds = f)
+ext(r1) = ext(template)
+crs(r1) = crs(template)
+
+out = zonal::execute_zonal(r1, geom = catchments, "ID")
+names(out) = c("ID", f)
+
+out[,(f) := round(.SD,5), .SDcols=f]
+
+data.table::fwrite(out, file.path(here, 'wrfinput.csv'), 
+                   row.names = FALSE)
+```
+
+
+```{r fulldom}
+fulldom = file.path(params$nwm_dir, 'Fulldom_CONUS_FullRouting.nc')
+fulldom_vars = c('landuse', "LKSATFAC")
+r1 = terra::rast(fulldom, subds = fulldom_vars)
+
+out = zonal::execute_zonal(r1, geom = catchments, "ID")
+names(out) = c("ID", fulldom_vars)
+
+out[,(f) := round(.SD,5), .SDcols=fulldom_vars]
+
+data.table::fwrite(out, 
+                   file.path(here, 'Fulldom-fullrouting.csv'), 
+                   row.names = FALSE)
+
+```
+
+```{r gwbuck}
+vars = c("Area_sqkm", "ComID", "Coeff", "Expon", "Zinit", "Zmax")
+
+nc = open.nc(file.path(params$nwm_dir, 'GWBUCKPARM_CONUS_FullRouting.nc'))
+
+ll2 = lapply(vars, function(x) RNetCDF::var.get.nc(nc, x)) %>% 
+  bind_cols() %>% 
+  setNames(vars) %>% 
+  rename(comid = ComID) %>% 
+  right_join(select(nhd_crosswalk, ID, comid), by = 'comid') %>% 
+  group_by(ID) %>% 
+  summarise(across(everything(), ~ round(
+      weighted.mean(.x, 
+                    w = .data$Area_sqkm, 
+                    na.rm = TRUE), 3))) %>% 
+  select(-comid, -Area_sqkm) %>% 
+  mutate(ID = paste0(catchment_prefix, ID))
+
+fwrite(ll2, file.path(here, 'gwbucket-params-fullrouting.csv'), row.names = FALSE)
+```
+
+
+```{r release}
+zip(zipfile = file.path(here, paste0('ngen-', params$version, ".zip")), 
+    files   = dir(here, full.names = TRUE))
+
+put_object(
+      file   = file.path(here, paste0('ngen-',params$version, ".zip")), 
+      object = paste0('ngen-',params$version, ".zip"), 
+      bucket = params$AWS_bucket,
+      multipart = TRUE)
+```

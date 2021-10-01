@@ -1,0 +1,260 @@
+---
+title: "Flowline Refactor"
+output: html_document
+editor_options:
+  chunk_output_type: console
+params:
+  RPU: 01a
+  min_da_km: 20
+  data_dir: "NEEDED-DATA"
+  output_dir: "OUTPUT"
+  output_name: "01a_10000_500.gpkg"
+  split_flines_meters: 10000
+  cores: 2
+  collapse_flines_meters: 500
+  collapse_flines_main_meters: 500
+  AWS_bucket: NULL
+---
+
+```{r setup_0, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE)
+
+library(sf)
+library(dplyr)
+library(raster)
+library(hyRefactor)
+library(nhdplusTools)
+library(jsonlite)
+
+rpu_code   <-  params$RPU
+VPU        <-  substr(rpu_code, 1, 2)
+poi_layer  <-  paste0("POIs_", VPU)
+
+if(is.null(params$output_name)){
+  out_gpkg   <-  file.path(params$output_dir, paste0(rpu_code, ".gpkg"))
+} else {
+  out_gpkg   <-  file.path(params$output_dir, params$output_name)
+}
+
+gf_gpkg    <-  file.path(params$output_dir, paste0("GF_", VPU,".gpkg"))
+
+data_paths = list.files(params$data_dir, recursive = TRUE, full.names = TRUE)
+
+# Output Layers
+nhd_flowline     <- "nhd_flowline"
+nhd_outlet       <- "nhd_outlet"
+nhd_catchment    <- "nhd_catchment"
+refactored_layer <- "collapsed"
+reconciled_layer <- "reconciled"
+outlets_layer    <- "outlets"
+divides_layer    <- "divides"
+```
+
+# Load NHD Flowline/Outlet network. 
+
+```{r flowlines}
+if(needs_layer(out_gpkg, nhd_flowline)) {
+  
+  # Determine which Flowlines are in scope, previously implemented in NHD_Navigate
+  nhd <- read_sf(gf_gpkg, "nhd_flowline") %>%
+    subset_rpu(rpu_code, run_make_standalone = TRUE) %>%
+    st_sf()
+  
+  nhd_outlets <- nhd %>% 
+    filter(RPUID %in% rpu_code) %>%
+    filter(Hydroseq == TerminalPa 
+          # | (toCOMID == 0 | is.na(toCOMID))
+          ) %>%
+    st_sf()
+
+  write_sf(nhd_outlets, out_gpkg, nhd_outlet)
+  write_sf(nhd, out_gpkg, nhd_flowline)
+  
+} else {
+  nhd <- read_sf(out_gpkg, nhd_flowline)
+  nhd_outlets <- read_sf(out_gpkg, nhd_outlet)
+}
+```
+
+# Load Catchments 
+
+```{r cats}
+if(needs_layer(out_gpkg, nhd_catchment)) {
+  cats <- readRDS(grep("nhdplus_catchment.rds", 
+                  data_paths, 
+                  value = TRUE)) %>% 
+    filter(FEATUREID %in% nhd$COMID) 
+  
+  write_sf(cats, out_gpkg, nhd_catchment)
+    
+} else {
+
+  cats <- read_sf(out_gpkg, nhd_catchment)
+
+}
+```
+
+
+```{r refactor}
+POIs <-  inner_join(read_sf(gf_gpkg, poi_layer),
+                    dplyr::select(st_drop_geometry(nhd), COMID, DnHydroseq), 
+                    by = "COMID")
+
+POI_downstream <- filter(nhd, 
+                         Hydroseq %in% POIs$DnHydroseq, 
+                         AreaSqKM > 0)
+
+# Networks that terminate and are smaller than the threshold.
+little_terminal <- filter(nhd, TerminalPa %in% 
+                          filter(nhd_outlets, 
+                                 TotDASqKM <= params$min_da_km & 
+                                 TerminalFl == 1)$TerminalPa)
+
+# Pass all outlets now but avoid modifying catchments in little_terminal
+nhd_outlets_nonPOI <- st_compatibalize(nhd_outlets, POIs) %>%
+    filter(!COMID %in% POIs$COMID)
+
+outlets <- dplyr::select(POIs, COMID) %>%
+  mutate(type = "outlet") %>%
+  bind_rows(dplyr::select(nhd_outlets_nonPOI, COMID) %>%
+          mutate(type = "terminal")) %>%
+  filter(COMID %in% cats$FEATUREID & 
+         !COMID %in% little_terminal$COMID)
+
+if(needs_layer(out_gpkg, outlets_layer)) {
+  write_sf(outlets, out_gpkg, outlets_layer)
+}
+
+
+TerminalPaths <- unique(filter(nhd, COMID %in% outlets$COMID)$TerminalPa)
+
+# Create events for streamgages and TE Plants
+events <- readRDS("data/gages_MDA.rds") %>%
+  rename(COMID = Gage_COMID) %>%
+  right_join(dplyr::select(st_drop_geometry(nhd), AreaSqKM, COMID, FromMeas, ToMeas), 
+             by = c("Final_COMID" = "COMID")) %>%
+  filter(REACH_meas - FromMeas > 5 & 
+           AreaSqKM > 2 & 
+           ToMeas - REACH_meas > 5) %>%
+  dplyr::select(COMID, REACHCODE, REACH_meas) %>%
+  # Events cannot be in terminal POIs, code seems to ignore the command not to split/combine those flowlines
+  filter(!COMID %in% nhd_outlets$COMID)
+
+
+# Avoid refactoring catchments that are long and thin and reasonably large. 
+avoid <- dplyr::filter(nhd, (sqrt(AreaSqKM) / LENGTHKM) > 3 & AreaSqKM > 1)
+
+# Attribute flowline network used for refactor
+nhd <- mutate(nhd, refactor = ifelse(TerminalPa %in% TerminalPaths, 1, 0))
+
+write_sf(nhd, out_gpkg, nhd_flowline)
+
+# Prep flowlines for refactor
+nhdplus_flines <- sf::st_zm(filter(nhd, refactor == 1)) %>%
+  st_as_sf() %>% 
+  select(-FTYPE)
+```
+
+```{r refactor_nhdplus}
+if(needs_layer(out_gpkg, refactored_layer)) {
+  
+  tf <- paste0("temp/refactored_", rpu_code, ".gpkg")
+  tr <- paste0("temp/reconciled_", rpu_code, ".gpkg")
+
+  refactor_nhdplus(nhdplus_flines              = nhdplus_flines, 
+                   split_flines_meters         = params$split_flines_meters, 
+                   split_flines_cores          = params$cores, 
+                   collapse_flines_meters      = params$collapse_flines_meters,
+                   collapse_flines_main_meters = params$collapse_flines_main_meters,
+                   out_refactored = tf, 
+                   out_reconciled = tr, 
+                   three_pass = TRUE, 
+                   purge_non_dendritic = FALSE, 
+                   events = events,
+                   exclude_cats = c(outlets$COMID, 
+                                    avoid$COMID, 
+                                    POI_downstream$COMID),
+                   warn = TRUE)
+  
+  write_sf(read_sf(tf), out_gpkg, refactored_layer)
+  write_sf(read_sf(tr), out_gpkg, reconciled_layer)
+  
+  unlink(list(tf, tr))
+}
+```
+
+```{r reconcile_catchments}
+if(needs_layer(out_gpkg, divides_layer)) {
+  
+  if(!nchar(cache_split <- Sys.getenv("CACHE_SPLIT")) > 5){
+    cache_split <- file.path("temp", paste0(rpu_code, ".rda"))
+  }
+  
+  base = dirname(grep(paste0("FdrFac", rpu_code, "/fdr"), 
+                    data_paths, 
+                    value = TRUE)[1])
+
+  fdr <- raster::raster(file.path(base, "fdr"))
+  fac <- raster::raster(file.path(base, "fac"))
+
+  reconciled <- st_transform(read_sf(out_gpkg, "reconciled"), st_crs(fdr)) 
+  refactored <- st_transform(read_sf(out_gpkg, "collapsed"),  st_crs(fdr)) 
+  
+  cats <-  st_transform(read_sf(out_gpkg, "nhd_catchment"),   st_crs(fdr)) 
+  st_precision(cats) <- res(fdr)[1]
+  
+  divides <- reconcile_catchment_divides(catchment = cats,
+                                         fline_ref = refactored,
+                                         fline_rec = reconciled,
+                                         fdr       = fdr,
+                                         fac       = fac,
+                                         para      = params$cores, 
+                                         cache     = cache_split) 
+    
+   if(exists("divides")){ unlink(cache_split) } 
+    
+   write_sf(divides, out_gpkg, "divides")
+} 
+```
+
+
+
+```{r routelink}
+
+flowpaths  = read_sf(out_gpkg, "reconciled")
+
+ tt = flowpaths %>% 
+   rename(comids = member_COMID) %>% 
+   attributes_for_flowpaths(
+  rl_vars = c(
+    "link",
+    "Qi",
+    "MusK",
+    "MusX",
+    "n",
+    "So",
+    "ChSlp",
+    "BtmWdth",
+    "time",
+    "Kchan",
+    "nCC",
+    "TopWdthCC",
+    "TopWdth"),
+  nhd_vars = 'slope', 
+  rl_path  = file.path("NEEDED-DATA", "NWM_parameters_v2.1/RouteLink_CONUS.nc"),
+  nhd_vaa_path = 'NEEDED-DATA/vaa.fst'
+)
+```
+
+
+
+
+```{r upload-to-AWS}
+if(!is.null(params$AWS_bucket)){
+  aws.s3::put_object(
+      file   = out_gpkg, 
+      object = basename(out_gpkg), 
+      bucket = params$AWS_bucket,
+      multipart = TRUE)
+}
+```

@@ -1,209 +1,173 @@
-#' Convert MULITLINESTINGS to LINESTRINGS
-#' @param flowpaths a flowpath `sf` object
-#' @return a `sf` object
-#' @export
-#' @importFrom sf st_geometry_type st_geometry st_line_merge
-#' @importFrom dplyr bind_rows
+flowpath_names = c("ID", "levelpath", "hydroseq", "comids",  "geometry")
+catchment_names = c("ID", 'areasqkm', "geometry")
 
-flowpaths_to_linestrings = function(flowpaths){
-  bool = (st_geometry_type(sf::st_geometry(flowpaths)) == "MULTILINESTRING")
-  multis = flowpaths[bool, ]
-  if(nrow(multis) > 0){
-    sf::st_geometry(multis) = st_line_merge(sf::st_geometry(multis))
-  }
-  singles = flowpaths[!bool, ]
+#' needs_layer
+#' @description Checks if layer existing in geopackage
+#' @param db character geopackage to check
+#' @param layer character layer name
+#' @return logical
+#' @export
+#' @importFrom sf st_layers
+
+
+needs_layer <- function(db, layer) {
   
-  bind_rows(multis, singles)
+  if(file.exists(db)) {
+    layers <- st_layers(db)
+    if(layer %in% layers$name)
+      return(FALSE)
+  }
+  TRUE
 }
 
-
-#' Build LINESTRING from 2 geoms
-#' @param geom1 (MULTILINESTRING) object 1
-#' @param geom2 (MULTILINESTRING) object 2
-#' @return a `sf` object
-#' @export
-#' @importFrom sf st_geometry_type st_union st_line_merge
-
-build_flow_line = function(geom1, geom2){
-  g = st_union(c(geom1, geom2))
-  if(st_geometry_type(g) == "MULTILINESTRING"){
-    g = st_line_merge(g)
+refactor_wrapper = function(flowpaths, 
+                            catchments,
+                            events = NULL,
+                            avoid = NULL,
+                            split_flines_meters = 10000, 
+                            collapse_flines_meters = 1000,  
+                            collapse_flines_main_meters = 1000,
+                            cores = 1,  
+                            facfdr = NULL,
+                            routing = NULL,
+                            keep = .9,
+                            outfile){
+  
+  tf <- tempfile(pattern = "refactored", fileext = ".gpkg")
+  tr <- tempfile(pattern = "reconciled", fileext = ".gpkg")
+  
+  if(!is.null(events)){
+    events = filter(events, COMID %in% flowpaths$COMID)
   }
   
-  g
-}
-
-
-#' Read Hydro Object
-#' @param obj either a parquet file or sf object
-#' @return an sf object
-#' @importFrom sfarrow st_read_parquet
-#' @importFrom methods is
-
-read_hydro = function(obj){
+  if(!is.null(events)){
+    avoid = avoid[avoid %in% flowpaths$COMID]
+  }
   
-  if(is.character(obj)){
-    if(grepl('parquet', obj)){
-      return(sfarrow::st_read_parquet(obj))
+  refactor_nhdplus(nhdplus_flines              = flowpaths, 
+                   split_flines_meters         = split_flines_meters, 
+                   split_flines_cores          = 1, 
+                   collapse_flines_meters      = collapse_flines_meters,
+                   collapse_flines_main_meters = collapse_flines_main_meters,
+                   out_refactored = tf, 
+                   out_reconciled = tr, 
+                   three_pass          = TRUE, 
+                   purge_non_dendritic = FALSE, 
+                   events = events,
+                   exclude_cats = avoid,
+                   warn = FALSE)
+  
+  rec = st_transform(read_sf(tr), 5070)
+  
+  if(!is.null(routing)){
+    
+    rec$order = nhdplusTools::get_streamorder(st_drop_geometry(select(rec, ID, toID)), status = FALSE)
+    
+    rec = hyRefactor::add_lengthmap(rec, nhdplusTools::get_vaa("lengthkm")) %>% 
+      attributes_for_flowpaths(
+        weight_col = "lengthMap",
+        length_weight = TRUE,
+        rl_vars = c(
+          "link", "Qi", "MusK", "MusX", "n",
+          "So", "ChSlp", "BtmWdth",
+          "time", "Kchan", "nCC",
+          "TopWdthCC", "TopWdth", "alt"),
+        rl_path  = routing
+      )
+    
+    
+    write_sf(st_transform(rec, 5070), outfile, "refactored_flowpaths", overwrite = TRUE)
+    
+  } else {
+    
+    write_sf(st_transform(rec, 5070), outfile, "refactored_flowpaths", overwrite = TRUE)
+    
+  }
+  
+  
+  if(!is.null(facfdr)){
+    
+    rpus = unique(flowpaths$RPUID)
+    rpus = rpus[!is.na(rpus)]
+    
+    fdrfac_files = list.files(facfdr, pattern = rpus, full.names = TRUE)
+    fdr = raster::raster(grep("_fdr", fdrfac_files, value = TRUE))
+    fac = raster::raster(grep("_fac", fdrfac_files, value = TRUE))
+    catchments <-  st_transform(catchments, st_crs(fdr)) 
+    st_precision(catchments) <- raster::res(fdr)[1]
+    
+    if("featureid" %in% names(catchments)){
+      catchments = rename(catchments, FEATUREID = featureid)
     }
-  } else if(methods::is(obj, "sf")) { 
-    return(obj)
-  } else {
-    message("obj must be an sf object or parquet file path")
-  }
-}
-
-#' Build HydroNetwork Graph
-#' @param flowpaths a filepath to a `parquet` file or `sf` object
-#' @param catchments a filepath to a `parquet` file or `sf` object
-#' @param ID_col the desired ID column
-#' @param directed should graph be directed?
-#' @export
-#' @importFrom sfnetworks as_sfnetwork activate
-#' @importFrom sf st_as_sf
-#' @importFrom dplyr mutate rename
-
-prep_network_graph = function(flowpaths, catchments, ID_col = "ID", directed = FALSE){
-  
-  old_id <- NULL
-  
-  flowpaths  = read_hydro(flowpaths)
-  catchments = read_hydro(catchments)
-  
-  if(nrow(flowpaths) != nrow(catchments)){
-    stop("Must have one flowpath per catchment!!")
-  }
-  
-  id_map = data.frame(
-    old_id = sort(flowpaths[[ID_col]]),
-    new_id = 1:nrow(flowpaths)
-  )
-  
-  #TODO: should this be directed???
-  fl_net = suppressWarnings({ as_sfnetwork(flowpaths, directed = directed) })
-  
-  nodes = st_as_sf(mutate(activate(fl_net,"nodes"), nexID = 1:n()))
-  
-  fl    = st_as_sf(mutate(activate(fl_net,"edges"))) %>% 
-    rename(old_id = !!ID_col) %>% 
-    mutate(ID = id_map$new_id[match(old_id, id_map$old_id)],
-           old_id = NULL)
-  
-  cat    = catchments  %>% 
-    rename(old_id = !!ID_col) %>% 
-    mutate(ID = id_map$new_id[match(old_id, id_map$old_id)],
-           old_id = NULL)
-  
-  hw   = fl$from[!fl$from %in% fl$to]
-  term = fl$to[!fl$to %in% fl$from]
-  
-  nodes$type = ifelse(nodes$nexID %in% hw, "hw", NA)
-  nodes$type = ifelse(nodes$nexID %in% term, "term", nodes$type)
-  nodes$type = ifelse(is.na(nodes$type), "nex", nodes$type)
-  
-  return(list(nex = nodes, fl = fl, cat  = cat))
-}
-
-
-#' Write a HydroNetwork GPKG
-#' @param network a newtwork list containing a cat, fl, and nex item (see `prep_network_graph`)
-#' @param outpath where to write the file?
-#' @export
-#' @importFrom sf write_sf
-
-write_network_gpkg = function(network, outpath){
-
-  if(sum(names(network) %in% c('nex', 'fl', 'cat')) != 3){
-    stop("Must have nex, fl, and cat list elements in network")
-  }
-  
-  unlink(outpath)
-  write_sf(network$fl,  outpath, layer = "flowpaths")
-  write_sf(network$cat, outpath, layer = "catchments")
-  write_sf(network$nex, outpath, layer = "nexi")
-  
-}
-
-
-#' Build Node Net
-#' @param flowpaths a filepath to a `parquet` file or `sf` object
-#' @param add_type should the nexus type be added?
-#' @importFrom sfnetworks as_sfnetwork activate
-#' @importFrom tidygraph edge_is_multiple edge_is_loop
-#' @importFrom sf st_as_sf st_drop_geometry
-#' @importFrom dplyr mutate n left_join select
-#' @return list
-#' @export
-
-build_node_net = function(flowpaths, add_type = TRUE){
-   ID <- to <- from <- NULL
-  
-  flowpaths = read_hydro(flowpaths)
-  
-  net = suppressWarnings({ sfnetworks::as_sfnetwork(flowpaths)  })
-  # network    = st_as_sf(mutate(activate(net,"edges"))) 
-  network = net %>% 
-    activate('edges') %>% 
-    filter(!edge_is_multiple()) %>%
-    filter(!edge_is_loop()) %>% 
-    st_as_sf()
-  
-  nodes = st_as_sf(mutate(activate(net,"nodes"), nexID = 1:n()))
-  
-  if(add_type){
-    id_map = network %>% 
-      # Identify fromID from fromNODE
-      left_join(select(st_drop_geometry(network), fromID  = ID, tmpto = to),   
-                by = c("from" = "tmpto")) %>% 
-      # Identify toID from toNODE
-      left_join(select(st_drop_geometry(network), toID    = ID, tmpfrom = from),
-                by = c("to" = "tmpfrom"))
     
-    hw         = id_map$from[!id_map$from %in% id_map$to]
-    term       = id_map$to[!id_map$to %in% id_map$from]
-    nodes$type = ifelse(nodes$nexID %in% hw, "hw", NA)
-    nodes$type = ifelse(nodes$nexID %in% term, "term", nodes$type)
-    nodes$type = ifelse(is.na(nodes$type), "nex", nodes$type)
+    reconciled <- st_transform(read_sf(tr), st_crs(fdr)) 
+    refactored <- st_transform(read_sf(tf),  st_crs(fdr)) 
     
-    network$fromType = left_join(select(network, from), 
-                                 st_drop_geometry(nodes), 
-                                 by = c('from' = "nexID"))$type
+    divides    <- reconcile_catchment_divides(catchment = catchments,
+                                              fline_ref = refactored,
+                                              fline_rec = reconciled,
+                                              fdr       = fdr,
+                                              fac       = fac,
+                                              para      = cores, 
+                                              cache     = NULL, 
+                                              fix_catchments = TRUE) 
     
-    network$toType = left_join(select(network, to), 
-                               st_drop_geometry(nodes), 
-                               by = c('to' = "nexID"))$type
-  }
+    write_sf(st_transform(divides, 5070), outfile, "refactored_catchments", overwrite = TRUE)
+  } 
   
-  list(node = nodes, network = network)
+  unlink(list(tr, tf))
+  return(outfile)
 }
 
-#' Find flowline node
-#' Returns the start or end node from a flowline.
-#' @param x `sf` flowline object
-#' @param position Node to find: "start" or "end" or "both"
-#' @export
-#' @importFrom sf st_coordinates st_as_sf st_crs
-#' @importFrom dplyr group_by filter row_number ungroup
-
-find_node = function (x, position = "end") {
+attributes_for_flowpaths = function(flowpaths,
+                                    weight_col = "lengthMap",
+                                    length_weight = TRUE,
+                                    rl_vars,
+                                    rl_path){
   
-  X <- Y <- L1 <- L2 <- NULL
+  if(!"Length" %in% rl_vars){ rl_vars = c("Length", rl_vars) }
   
-  tmp <- as.data.frame(st_coordinates(x))
-  if ("L2" %in% names(x)) {
-    tmp <- group_by(tmp, L2)
-  } else {
-    tmp <- group_by(tmp, L1)
-  }
+  net_map  <- dplyr::select(st_drop_geometry(flowpaths), ID, !!weight_col) %>%
+    mutate(comid = strsplit(get(weight_col), ",")) %>%
+    tidyr::unnest(cols = comid) %>%
+    mutate(full_comids = floor(as.numeric(comid)),
+           w = 10 * (as.numeric(comid) - full_comids), 
+           w = ifelse(rep(length_weight, n()), w, 1),
+           comid = NULL) 
   
-  if (position == "end") {
-    tmp <- filter(tmp, row_number() == n())
-  } else if (position == "start") {
-    tmp <- filter(tmp, row_number() == 1)
-  } else {
-    tmp <- filter(tmp, row_number() %in% c(1, n()))
-  }
+  nc = RNetCDF::open.nc(rl_path)
   
-  tmp <- select(ungroup(tmp), X, Y)
-  st_as_sf(tmp, coords = c("X", "Y"), crs = st_crs(x))
+  ll = lapply(rl_vars, function(x) RNetCDF::var.get.nc(nc, x))
+  
+  df = data.frame(do.call(cbind, ll)) %>% 
+    setNames(rl_vars) %>% 
+    rename(comid = link) %>% 
+    right_join(net_map, by = c('comid' = 'full_comids')) %>% 
+    select(-!!weight_col) %>% 
+    mutate(w = w * Length) %>% 
+    group_by(ID) %>% 
+    summarise(across(everything(), ~ round(
+      weighted.mean(x = ., 
+                    w = w, 
+                    na.rm = TRUE), 3))) %>% 
+    dplyr::select(-comid, -Length, -w) 
+  
+  df2 = lapply(c("link", "gages", 'NHDWaterbodyComID'), function(x) x = RNetCDF::var.get.nc(nc, x)) %>% 
+    bind_cols() %>% 
+    setNames(c("link", "gages", 'NHDWaterbodyComID')) %>% 
+    rename(comid = link) %>% 
+    right_join(net_map, by = c('comid' = 'full_comids')) %>%
+    mutate(gages = trimws(gages),
+           gages = ifelse(gages == "", NA, gages),
+           NHDWaterbodyComID = ifelse(NHDWaterbodyComID == -9999, NA, NHDWaterbodyComID)
+    ) %>% 
+    group_by(ID) %>% 
+    summarise(gages = paste(gages[!is.na(gages)], collapse = ","),
+              NHDWaterbodyComID = paste(unique(NHDWaterbodyComID[!is.na(NHDWaterbodyComID)]), collapse = ",")) %>% 
+    left_join(df) %>% 
+    mutate(gages = ifelse(gages == "", NA, gages),
+           NHDWaterbodyComID = ifelse(NHDWaterbodyComID == "", NA, NHDWaterbodyComID))
+  
+  left_join(flowpaths, df2, by = "ID") %>% 
+    mutate(Length_m = st_length(.))
 }

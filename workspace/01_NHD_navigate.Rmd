@@ -1,0 +1,397 @@
+---
+title: "NHD Navigate"
+output: html_document
+editor_options:
+  chunk_output_type: console
+params:
+  RPU: 01a
+  min_da_km: 20
+  data_dir: "NEEDED-DATA"
+  output_dir: "OUTPUT"
+  AWS_bucket: NULL
+---  
+
+```{r}
+knitr::opts_chunk$set(error = TRUE, cache = FALSE, warning = FALSE, message = FALSE)
+
+library(dplyr)
+library(sf)
+library(jsonlite)
+library(nhdplusTools)
+
+select <- dplyr::select
+
+lapply(list.files('R', full.names = TRUE), source)
+
+rpu_code = params$RPU
+VPU      = substr(rpu_code, 1, 2)
+min_da_km = params$min_da_km
+
+data_paths = list.files(params$data_dir, recursive = TRUE, full.names = TRUE)
+
+nav_gpkg    <- file.path(params$output_dir, paste0("GF_", VPU,".gpkg"))
+
+nhd_flowline <- "nhd_flowline"
+nhd_catchment <- "nhd_catchment"
+xwalk_layer <- paste0("HUC12_nhd_", VPU) 
+nav_poi_layer <- paste0("pois_", VPU) 
+WBs_layer <-  paste0("WB_", VPU) 
+poi_moved <- paste0("POIs_mv_", VPU)
+inc_pois <- paste0("inc_POIs_", VPU) 
+nsegments_layer <- paste0("nsegment_", VPU) #
+pois_all <- paste0("POIs_", VPU) 
+poi_xWalk <- paste0("poi_xWalk_", VPU) 
+final_poi_layer <- paste0("final_POIS_", VPU)
+
+nhd_rds    = grep("nhdplus_flowline_update_sb.rds", 
+                  data_paths, 
+                  value = TRUE)
+
+VAA <- fst::read_fst( grep("vaa.fst", data_paths, value = TRUE), c("comid", 'dnminorhyd'))
+```
+
+```{r huc12 POIs}
+#  Derive or load HUC12 POIs
+if(needs_layer(nav_gpkg, nav_poi_layer)) {
+  
+  if (needs_layer(nav_gpkg, nhd_flowline)){
+    
+    # Subset NHD by VPU
+    nhd <- VPU_Subset(nhd_rds = nhd_rds, 
+                      VPU,
+                      regoutlets = grep('RegOutlets.json', data_paths, value = TRUE)) %>%
+      left_join(VAA, by = c("COMID" = "comid"))
+    
+    if("arbolate_sum" %in% names(nhd)) nhd <- rename(nhd, ArbolateSu = arbolate_sum)
+    
+    # Filter and write dendritic/non-coastal subset to gpkg
+    # This will be iterated over to produce the final network after POIs identified
+    non_dend <- unique(unlist(lapply(filter(nhd, TerminalFl == 1 & TotDASqKM < min_da_km)
+                                     %>% pull(COMID), NetworkNav, st_drop_geometry(nhd))))
+      
+    # Add fields to note dendritic and POI flowlines
+    nhd <- nhd %>% 
+      mutate(dend = ifelse(!COMID %in% non_dend, 1, 0),
+             poi = ifelse(!COMID %in% non_dend & TotDASqKM >= min_da_km, 1, 0)) 
+    
+    write_sf(nhd, nav_gpkg, nhd_flowline)
+  } else {
+     nhd <- read_sf(nav_gpkg, nhd_flowline)
+     try(nhd <- select(nhd, -c(minNet, WB, struct_POI, struct_Net, POI_ID)))
+  }
+  
+  # Join HUC12 outlets with NHD
+  HUC12_COMIDs <- read_sf(grep('hu_outlets', data_paths, value = TRUE), "hu_points") %>% 
+    filter(grepl(paste0("^", substr(VPU, start = 1, stop = 2)), .data$HUC12)) %>%
+    select(COMID, HUC12) %>%
+    # Remove this when HUC12 outlets finished
+    group_by(COMID) %>% 
+    slice(1)
+
+  # Create POIs - some r05 HUC12 POIs not in R05 NHD
+  huc12_POIs <- POI_creation(st_drop_geometry(HUC12_COMIDs), filter(nhd, poi == 1), "HUC12")
+
+  # Write out geopackage layer representing POIs for given theme
+  write_sf(huc12_POIs, nav_gpkg, nav_poi_layer)
+  tmp_POIs <- huc12_POIs
+} else {
+  # Load HUC12 POIs as the tmpPOIs if they already exist
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer) 
+  nhd <- read_sf(nav_gpkg, nhd_flowline)
+}
+```
+
+```{r streamgage POIs}
+if(all(is.na(tmp_POIs$Type_Gages))) { 
+
+  # Previously identified streamgages within Gage_Selection.Rmd
+  streamgages_VPU <- read_sf(grep("Gages_info.gpkg", 
+                                  data_paths, 
+                                  value = TRUE), 
+                             "Gages") %>%
+    rename(COMID = comid) %>% 
+    filter(COMID %in% nhd$COMID) %>%
+    st_drop_geometry() %>%
+    switchDiv(., nhd) 
+  
+  streamgages <- streamgages_VPU %>% 
+    group_by(COMID) %>%
+    # If multiple gages per COMID, pick one with highest rank as rep POI_ID
+    filter(gage_score == max(gage_score), 
+           !is.na(drain_area)) %>%
+    ungroup() %>%
+    select(COMID, site_no)
+    
+  # Derive GAGE POIs; use NHD as we've already filtered by NWIS DA in the Gage selection step
+  tmp_POIs <- POI_creation(streamgages, nhd, "Gages") %>%
+    addType(., tmp_POIs, "Gages")
+  
+  # As a fail-safe, write out list of gages not assigned a POI
+  if(nrow(filter(streamgages_VPU, !site_no %in% tmp_POIs$Type_Gages)) > 0) {
+    write_sf(filter(streamgages_VPU, !site_no %in% tmp_POIs$Type_Gages),
+             nav_gpkg, "unassigned_gages")
+  }
+  
+  # Write out geopackage layer representing POIs for given theme
+  write_sf(tmp_POIs, nav_gpkg, nav_poi_layer)
+} else {
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer)
+}
+```
+
+```{r TE POIs}
+#  Derive or load Thermoelectric POIs ----------------------
+if(all(is.na(tmp_POIs$Type_TE))) {
+  
+  nhd$VPUID <- substr(nhd$RPUID, 1, 2)
+
+  # Read in Thermoelectric shapefile
+  TE_COMIDs <- read_sf(grep("TE_Model_Estimates_lat.long_COMIDs.shp", data_paths, value = TRUE)) %>%
+    mutate(COMID = as.integer(COMID)) %>%
+    inner_join(., select(st_drop_geometry(nhd), COMID, VPUID), by = "COMID") %>%
+    filter(grepl(paste0("^", substr(VPU, 1, 2), ".*"), .data$VPUID), COMID > 0) %>%
+    switchDiv(., nhd) %>%
+    group_by(COMID) %>%
+    summarize(EIA_PLANT = paste0(unique(EIA_PLANT_), collapse = " "), count = n()) 
+  
+   # Derive TE POIs
+  tmp_POIs <- POI_creation(st_drop_geometry(TE_COMIDs), filter(nhd, dend == 1), "TE") %>%
+    addType(., tmp_POIs, "TE")
+
+  # As a fail-safe, write out list of TE plants not assigned a POI
+  if(nrow(filter(TE_COMIDs, !COMID %in% tmp_POIs$COMID)) > 0) {
+    write_sf(filter(TE_COMIDs, !COMID %in% tmp_POIs$COMID),
+             nav_gpkg, "unassigned_TE")
+  }
+  
+  # Write out geopackage layer representing POIs for given theme
+  write_sf(tmp_POIs, nav_gpkg, nav_poi_layer)
+} else {
+  # Load TE POIs if they already exist
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer)
+}
+```
+
+```{r Confluence POIs}
+# Derive POIs at confluences where they are absent ----------------------
+if(all(is.na(tmp_POIs$Type_Conf))) {
+
+  # Navigate upstream from each POI and determine minimally-sufficient network between current POI sets
+  up_net <- unique(unlist(lapply(unique(tmp_POIs$COMID), NetworkNav, nhd))) 
+  finalNet <- unique(NetworkConnection(up_net, st_drop_geometry(nhd))) 
+
+  # Subset NHDPlusV2 flowlines to navigation results and write to shapefile
+  nhd <- mutate(nhd, 
+                minNet = ifelse(COMID %in% finalNet, 1, 0))
+  
+  # Create new confluence POIs
+  conf_COMIDs <- st_drop_geometry(filter(nhd, minNet == 1)) %>%
+    # Downstream hydrosequence of 0 indicates
+    #   the flowline is terminating or
+    #   leaving the domain, so they
+    #   are excluded from this process
+    filter(DnHydroseq > 0) %>%
+    group_by(DnHydroseq) %>%
+    filter(n()> 1) %>%
+    mutate(Type_Conf = LevelPathI) %>%
+    ungroup() %>% 
+    select(COMID, Type_Conf)
+
+  tmp_POIs <- POI_creation(conf_COMIDs, filter(nhd, minNet == 1), "Conf") %>%
+    addType(., tmp_POIs, "Conf")
+  
+  write_sf(nhd, nav_gpkg, nhd_flowline)
+  write_sf(tmp_POIs, nav_gpkg, nav_poi_layer)
+} else {
+  nhd <- read_sf(nav_gpkg, nhd_flowline)
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer)
+}
+```
+
+```{r NID POIs}
+#  Derive or load NID POIs ----------------------
+if(all(is.na(tmp_POIs$Type_NID))) {
+
+  # Read in NID shapefile
+  NID_COMIDs <- read.csv(grep("NID_attributes_20170612.txt", data_paths, value = TRUE), stringsAsFactors = FALSE) %>%
+    filter(ONNHDPLUS == 1, FlowLcomid %in% filter(nhd, dend ==1)$COMID) %>%
+    switchDiv(., nhd) %>%
+    group_by(FlowLcomid) %>%
+    summarize(Type_NID = paste0(unique(NIDID), collapse = " ")) 
+  
+  # Derive NID POIs
+  tmp_POIs <- POI_creation(NID_COMIDs, filter(nhd, dend ==1), "NID") %>%
+    addType(., tmp_POIs, "NID", bind = FALSE)
+
+  # Write out geopackage layer representing POIs for given theme
+  write_sf(tmp_POIs, nav_gpkg, nav_poi_layer)
+} else {
+  # Load NID POIs if they already exist
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer)
+}
+```
+
+```{r waterbody POIs}
+#  Derive or load Waterbody POIs ----------------------
+if(all(is.na(tmp_POIs$Type_WBOut))) {
+
+  # Read in waterbodies
+  WBs_VPU <- readRDS(grep('nhdplus_waterbodies.rds', data_paths, value = TRUE)) %>%
+    mutate(FTYPE = as.character(FTYPE)) %>%
+    filter(FTYPE %in% c("LakePond", "Reservoir") &
+             AREASQKM >= (params$min_da_km/2) &
+           COMID %in% filter(nhd, minNet == 1)$WBAREACOMI) %>%
+    st_sf()
+
+  # Write out waterbodies
+  write_sf(st_transform(WBs_VPU, 4269), nav_gpkg, WBs_layer)
+
+  # Segments that are in waterbodies
+  nhd <- mutate(nhd, WB = ifelse(WBAREACOMI > 0 & WBAREACOMI %in% WBs_VPU$COMID, 1, 0))
+
+  # Create waterbody outlet POIs
+  wbout_COMIDs <- filter(nhd, dend == 1 & WB == 1) %>%
+    group_by(WBAREACOMI) %>%
+    slice(which.min(Hydroseq)) %>%
+    switchDiv(., nhd) %>%
+    select(COMID, WBAREACOMI) 
+
+  # Create waterbody inlet POIs
+  wbin_COMIDs <- filter(nhd, WB == 0, 
+                        DnHydroseq %in% filter(nhd, WB == 1)$Hydroseq,
+                        TotDASqKM >= min_da_km) %>%
+    select(-WBAREACOMI) %>%
+    switchDiv(., nhd) %>%
+    inner_join(st_drop_geometry(filter(nhd, minNet == 1)) %>%
+                 select(Hydroseq, WBAREACOMI), by = c("DnHydroseq" = "Hydroseq")) %>%
+    select(COMID, WBAREACOMI) %>%
+    group_by(COMID) %>%
+    slice(n = 1)
+
+  tmp_POIs <- POI_creation(filter(wbout_COMIDs, !COMID %in% wbin_COMIDs$COMID), filter(nhd, poi == 1), "WBOut") %>%
+    addType(., tmp_POIs, "WBOut")
+  
+  tmp_POIs <- POI_creation(filter(wbin_COMIDs, !COMID %in% wbout_COMIDs$COMID), filter(nhd, poi == 1), "WBIn") %>%
+    addType(., tmp_POIs, "WBIn")
+
+  write_sf(nhd, nav_gpkg, nhd_flowline)
+  write_sf(tmp_POIs, nav_gpkg, nav_poi_layer)
+} else {
+  tmp_POIs <- read_sf(nav_gpkg, nav_poi_layer)
+  nhd <- read_sf(nav_gpkg, nhd_flowline)
+}
+```
+
+```{r Final POIs}
+# Derive final POI set ----------------------
+if(needs_layer(nav_gpkg, pois_all)) {
+
+  unCon_POIs <- filter(st_drop_geometry(filter(nhd, minNet == 1)), COMID %in% tmp_POIs$COMID, AreaSqKM == 0)
+  
+  # If any POIs happened to fall on flowlines w/o catchment
+  if (nrow(unCon_POIs) >0){
+    # For confluence POIs falling on Flowlines w/o catchments, derive upstream valid flowline,
+    poi_fix <- DS_poiFix(tmp_POIs, filter(nhd, dend == 1)) #%>%
+    new_POIs <- st_compatibalize(poi_fix$new_POIs, tmp_POIs)
+    xWalk <- poi_fix$xWalk
+    
+    # POIs that didn't need to be moved
+    tmp_POIs_fixed <- filter(tmp_POIs, !COMID %in% c(poi_fix$xWalk$oldPOI, poi_fix$xWalk$COMID))
+    # bind together
+    final_POIs <- bind_rows(tmp_POIs_fixed, select(poi_fix$new_POIs, -c(oldPOI, to_com)))
+    # Write out fixes
+    write_sf(new_POIs, nav_gpkg, poi_moved)
+    write_sf(xWalk, nav_gpkg, poi_xWalk)
+    # write out final POIs
+    write_sf(final_POIs, nav_gpkg, pois_all)
+  } else {
+    # If no fixes designate as NA
+    poi_fix <- NA
+    # write out final POIs
+    write_sf(tmp_POIs, nav_gpkg, pois_all)
+  }
+  
+} else {
+  # Need all three sets for attribution below
+  final_POIs <- read_sf(nav_gpkg, pois_all)
+  new_POIs <- if(layer_exists(nav_gpkg, poi_moved)) read_sf(nav_gpkg, poi_moved) else (NA)
+  xWalk <- if(layer_exists(nav_gpkg, poi_xWalk)) read_sf(nav_gpkg, poi_xWalk) else (NA)
+  unCon_POIs <- filter(st_drop_geometry(filter(nhd, minNet == 1)), COMID %in% tmp_POIs$COMID, AreaSqKM == 0)
+}
+```
+
+```{r Final segments}
+# Derive first cut of segments ----------------------
+if(needs_layer(nav_gpkg, nsegments_layer)) {
+
+  # Sort POIs by Levelpath and Hydrosequence in upstream to downstream order
+  seg_POIs <-  filter(st_drop_geometry(nhd), 
+                      COMID %in% tmp_POIs$COMID, 
+                      COMID %in% filter(nhd, minNet == 1)$COMID) 
+  # derive incremental segments from POIs
+  inc_segs <- segment_increment(filter(nhd, minNet == 1), seg_POIs) 
+  
+  nhd_Final <- nhd %>%
+    left_join(select(inc_segs, COMID, POI_ID), by = "COMID")
+  
+  # create and write out final dissolved segments
+  nsegments_fin <- segment_creation(nhd_Final, xWalk)
+  nhd_Final <- select(nhd_Final, -POI_ID) %>% 
+    left_join(select(st_drop_geometry(nsegments_fin$raw_segs), COMID, POI_ID), by = "COMID")
+  
+  nsegments <- nsegments_fin$diss_segs
+  
+  # Produce the minimal POIs needed to derive the network based on LP and terminal outlets
+  strucFeat <- structPOIsNet(nhd_Final, final_POIs)
+  nhd_Final <- nhd_Final %>% 
+    mutate(struct_POI = ifelse(COMID %in% strucFeat$struc_POIs$COMID, 1, 0),
+           struct_Net = ifelse(COMID %in% strucFeat$structnet$COMID, 1, 0))
+  
+  write_sf(nhd_Final, nav_gpkg, nhd_flowline)
+  write_sf(nsegments, nav_gpkg, nsegments_layer)
+} else {
+  # Read in NHDPlusV2 flowline simple features and filter by vector processing unit (VPU)
+  final_POIs <- read_sf(nav_gpkg, pois_all)
+  nhd_Final <- read_sf(nav_gpkg, nhd_flowline)
+  nsegments <- read_sf(nav_gpkg, nsegments_layer)
+}
+
+# Ensure that all the problem POIs have been taken care of
+sub <- nhd_Final %>% filter(COMID %in% final_POIs$COMID)
+print (paste0(nrow(sub[sub$AreaSqKM == 0,]), " POIs on flowlines with no local drainage contributions"))
+```
+
+```{r POI Collapse}
+#  Load data
+if(needs_layer(nav_gpkg, final_poi_layer)) {
+
+  #1 Move POIs downstream by category
+  out_gages <- POI_move_down(nav_gpkg, final_POIs, nsegments, filter(nhd_Final, !is.na(POI_ID)), "Type_Gages", .05)
+  out_HUC12 <- POI_move_down(nav_gpkg, out_gages$allPOIs, out_gages$segs, out_gages$FL, "Type_HUC12", .10)
+  
+  nhd_Final <- select(nhd_Final, -POI_ID) %>%
+    left_join(st_drop_geometry(out_HUC12$FL) %>% 
+                select(COMID, POI_ID), by = "COMID")
+
+  # Write out geopackage layer representing POIs for given theme
+  write_sf(out_HUC12$allPOIs, nav_gpkg, final_poi_layer)
+  write_sf(nhd_Final, nav_gpkg, nhd_flowline)
+  write_sf(out_HUC12$segs, nav_gpkg, nsegments_layer)
+} else {
+  final_POIs2 <- read_sf(nav_gpkg, final_poi_layer)
+  nhd_Final <- read_sf(nav_gpkg, nhd_flowline)
+  nsegments <- read_sf(nav_gpkg, nsegments_layer)
+}
+```
+
+
+```{r aws}
+if(!is.null(params$AWS_bucket)){
+    aws.s3::put_object(
+      file   = nav_gpkg, 
+      object = basename(nav_gpkg), 
+      bucket = params$AWS_bucket,
+      multipart = TRUE
+    )
+}
+```

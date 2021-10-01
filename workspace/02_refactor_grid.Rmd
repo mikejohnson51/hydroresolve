@@ -1,0 +1,106 @@
+---
+title: "Flowline Refactor Grid"
+output: html_document
+editor_options:
+  chunk_output_type: console
+params:
+  RPU: 02a
+  routelink:        "/Volumes/Transcend/nwmCONUS-v216/RouteLink_CONUS.nc"
+  reference_fabric: "/Volumes/Transcend/ngen/CONUS-hydrofabric/ngen-reference"
+  output_dir:       "/Volumes/Transcend/ngen/CONUS-hydrofabric/ngen-refactor"
+  split_flines_meters: !r 10000
+  collapse_flines_main_meters: !r 1000
+  collapse_flines_meters: !r NULL
+  fdrfac: "/Volumes/Transcend/ngen/fdrfac"
+  AWS_bucket: "formulations-dev/hydrofabric/ngen-refactor"
+---
+
+```{r setup_0, echo=FALSE, cache=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, warning = FALSE, message = FALSE)
+
+library(hyRefactor)
+
+source("../R/utils.R")
+
+RPU = params$RPU
+   
+out_dir = file.path(params$output_dir, RPU)
+dir.create(out_dir, showWarnings = FALSE)
+   
+ref_gpkg = file.path(params$reference_fabric, paste0("ngen_reference_", RPU,".gpkg"))
+
+if(is.null(params$collapse_flines_meters)){
+  grid = expand.grid(params$split_flines_meters, params$collapse_flines_main_meters) %>% 
+  setNames(c("split", "main")) %>%
+  mutate(collapse = main, ver = 1:n(),
+         name = glue::glue("{dir}/rf_s{s}_m{m}_c{c}.gpkg", 
+                    dir = out_dir,
+                    s   = split,
+                    m   = main,
+                    c = collapse))
+} else {
+  grid = expand.grid(params$split_flines_meters,
+                     params$collapse_flines_main_meters,
+                     params$collapse_flines_meters) %>% 
+  setNames(c("split", "main", 'collapse')) %>%
+  mutate(ver = 1:n(),
+         name = glue::glue("{dir}/rf_s{s}_m{m}_c{c}.gpkg", 
+                    dir = out_dir,
+                    s   = split,
+                    m   = main,
+                    c = collapse))
+}
+
+grid = filter(grid, !file.exists(name))
+```
+
+
+```{r refactor_nhdplus}
+
+if(nrow(grid > 0)){
+  
+  events            = read_sf(ref_gpkg, "events")
+  nhdplus_flowpaths = read_sf(ref_gpkg, "flowpaths")
+  avoid             = read_sf(ref_gpkg, "avoid")
+  catchments  = if(!is.null(params$fdrfac)){ read_sf(ref_gpkg, "nhd_catchment") }
+    
+  lapply(1:nrow(grid), function(x){
+      message(grid$name[x], " (",  x, " of ", nrow(grid), ")")
+      refactor_wrapper(flowpaths                   = nhdplus_flowpaths, 
+                       catchments                  = catchments,
+                       events                      = events,
+                       avoid                       = avoid$COMID,
+                       split_flines_meters         = grid$split[x], 
+                       collapse_flines_meters      = grid$collapse[x],  
+                       collapse_flines_main_meters = grid$main[x],
+                       cores                       = 3,  
+                       facfdr                      = params$fdrfac,
+                       routing                     = params$routelink,
+                       outfile                     = grid$name[x])
+  })
+  
+  message("Done!")
+  
+if(!is.null(params$AWS_bucket)){
+  
+  files = list.files(out_dir, full.names = TRUE)
+  
+  lapply(1:length(files), function(x) {
+    put_object(file = files[x], 
+               object = file.path(params$RPU, basename(files[x])), 
+               bucket = params$AWS_bucket,
+               multipart = TRUE) 
+  })
+  
+  #zipper = file.path(dirname(out_dir), params$RPU)
+  #zip(zipfile = zipper, files = dir(out_dir, full.names = TRUE))
+  
+  # aws.s3::put_object(
+  #     file   = paste0(zipper, ".zip"), 
+  #     object = basename(paste0(zipper, ".zip")), 
+  #     bucket = params$AWS_bucket,
+  #     multipart = TRUE)
+}
+  
+}
+```

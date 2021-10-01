@@ -5,3 +5,12 @@ outputs/*
 figures/*
 release/*
 .DS_Store
+inst/*
+/workspace/cache-old/*
+/workspace/NEEDED-DATA/*
+/workspace/OUTPUT/*
+/workspace/temp/*
+/workspace/data/*
+/depriciate/*
+/releases/*
+*.gpkg

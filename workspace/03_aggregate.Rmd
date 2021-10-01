@@ -1,0 +1,55 @@
+---
+title: "Network Aggregation"
+output: html_document
+editor_options:
+  chunk_output_type: console
+params:
+  RPU: 01a
+  output_dir: "OUTPUT"
+  AWS_bucket: NULL
+  keep: .9
+  ideal_area_km: 10
+  min_area_km: 3
+  min_length_km: .6
+---
+
+```{r}
+knitr::opts_chunk$set(error = TRUE, cache = FALSE, message = FALSE, warning = FALSE)
+
+library(dplyr)
+library(sf)
+library(rmapshaper)
+
+select <- dplyr::select
+out_gpkg = file.path(params$output_dir, paste0(rpu_code, "-aggregate.gpkg"))
+in_gpkg  = file.path(params$output_dir, paste0(rpu_code, ".gpkg"))
+
+R.utils::sourceDirectory("R")
+```
+
+```{r}
+out  = spatial_topology_correction(gpkg = in_gpkg, keep = params$keep) %>%
+  merge_levelpath(params$ideal_area_km) %>%
+  remove_islands() %>%
+  mainstem_reduce(min_area = params$min_area_km, 
+                  min_length = params$min_length_km) %>%
+  remove_islands() %>%
+  remove_single_levelpaths(min_area = params$min_area_km, 
+                           min_length = params$min_length_km)
+
+
+write_sf(out$flowpaths, out_gpkg, "flowpaths")
+write_sf(out$catchments, out_gpkg, "catchments")
+```
+         
+```{r aws}
+if(!is.null(params$output_dir)){
+  aws.s3::put_object(
+      file   = out_gpkg, 
+      object = basename(out_gpkg), 
+      bucket = params$AWS_bucket,
+      multipart = TRUE)
+}
+```
+
+
